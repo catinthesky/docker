@@ -58,25 +58,51 @@ func parsePSOutput(output []byte, pids []int) (*container.ContainerTopOKBody, er
 	}
 
 	// loop through the output and extract the PID from each line
+	//Fix bug https://github.com/docker/docker/issues/30580
+	//Flag used to decide if the previous pid being contianter contained
+	preContainedPidFlag := false
+	//Label when containter contained pid found, go forward to process next line
+processNextLine:
 	for _, line := range lines[1:] {
 		if len(line) == 0 {
 			continue
 		}
 		fields := fieldsASCII(line)
-		p, err := strconv.Atoi(fields[pidIndex])
-		if err != nil {
-			return nil, fmt.Errorf("Unexpected pid '%s': %s", fields[pidIndex], err)
+
+		//adding up this line of process to procList
+		addProcess := func() {
+			// Make sure number of fields equals number of header titles
+			// merging "overhanging" fields
+			process := fields[:len(procList.Titles)-1]
+			process = append(process, strings.Join(fields[len(procList.Titles)-1:], " "))
+			procList.Processes = append(procList.Processes, process)
+		}
+
+		var (
+			p   int
+			err error
+		)
+
+		if fields[pidIndex] == "-" {
+			if preContainedPidFlag {
+				addProcess()
+			}
+			continue
+		} else {
+			p, err = strconv.Atoi(fields[pidIndex])
+			if err != nil {
+				return nil, fmt.Errorf("Unexpected pid '%s': %s", fields[pidIndex], err)
+			}
 		}
 
 		for _, pid := range pids {
 			if pid == p {
-				// Make sure number of fields equals number of header titles
-				// merging "overhanging" fields
-				process := fields[:len(procList.Titles)-1]
-				process = append(process, strings.Join(fields[len(procList.Titles)-1:], " "))
-				procList.Processes = append(procList.Processes, process)
+				preContainedPidFlag = true
+				addProcess()
+				continue processNextLine
 			}
 		}
+		preContainedPidFlag = false
 	}
 	return procList, nil
 }
